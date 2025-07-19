@@ -1,0 +1,191 @@
+name: 'PixelLint Design Precision Check'
+description: 'Analyze design screenshots for pixel-perfect precision using AI-powered visual linting'
+author: 'Caboo Intelligence'
+
+branding:
+  icon: 'eye'
+  color: 'purple'
+
+inputs:
+  pattern:
+    description: 'Glob pattern for screenshot files to analyze'
+    required: false
+    default: 'screenshots/**/*.png'
+  threshold:
+    description: 'Minimum score threshold (0.0-1.0) to pass'
+    required: false
+    default: '0.7'
+  fail-on-issues:
+    description: 'Whether to fail the action if issues are found'
+    required: false
+    default: 'true'
+  output-format:
+    description: 'Output format (json, html, markdown)'
+    required: false
+    default: 'json'
+  comment-pr:
+    description: 'Whether to comment results on pull requests'
+    required: false
+    default: 'true'
+  upload-report:
+    description: 'Whether to upload the analysis report as an artifact'
+    required: false
+    default: 'true'
+
+outputs:
+  score:
+    description: 'Overall design precision score (0.0-1.0)'
+  grade:
+    description: 'Letter grade (A+, A, B, C, F)'
+  total-files:
+    description: 'Total number of files analyzed'
+  passed-files:
+    description: 'Number of files that passed the threshold'
+  failed-files:
+    description: 'Number of files that failed the threshold'
+  report-url:
+    description: 'URL to the uploaded report artifact'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install PixelLint CLI
+      shell: bash
+      run: |
+        # For MVP, install from local directory
+        # In production: npm install -g pixellint
+        echo "Installing PixelLint CLI..."
+        cd ${{ github.action_path }}/../packages/pixellint
+        npm ci
+        npm link
+
+    - name: Run PixelLint Analysis
+      id: analyze
+      shell: bash
+      run: |
+        # Run analysis
+        pixellint analyze "${{ inputs.pattern }}" \
+          --threshold "${{ inputs.threshold }}" \
+          --output "${{ inputs.output-format }}" \
+          > pixellint-results.json
+        
+        # Extract results
+        SCORE=$(cat pixellint-results.json | jq -r '.summary.averageScore // 0')
+        TOTAL=$(cat pixellint-results.json | jq -r '.summary.totalFiles // 0')
+        PASSED=$(cat pixellint-results.json | jq -r '.summary.passedFiles // 0')
+        FAILED=$(cat pixellint-results.json | jq -r '.summary.failedFiles // 0')
+        
+        # Calculate grade
+        if (( $(echo "$SCORE >= 0.97" | bc -l) )); then
+          GRADE="A+"
+        elif (( $(echo "$SCORE >= 0.90" | bc -l) )); then
+          GRADE="A"
+        elif (( $(echo "$SCORE >= 0.80" | bc -l) )); then
+          GRADE="B"
+        elif (( $(echo "$SCORE >= 0.70" | bc -l) )); then
+          GRADE="C"
+        else
+          GRADE="F"
+        fi
+        
+        # Set outputs
+        echo "score=$SCORE" >> $GITHUB_OUTPUT
+        echo "grade=$GRADE" >> $GITHUB_OUTPUT
+        echo "total-files=$TOTAL" >> $GITHUB_OUTPUT
+        echo "passed-files=$PASSED" >> $GITHUB_OUTPUT
+        echo "failed-files=$FAILED" >> $GITHUB_OUTPUT
+
+    - name: Generate HTML Report
+      if: inputs.output-format != 'html'
+      shell: bash
+      run: |
+        pixellint analyze "${{ inputs.pattern }}" \
+          --threshold "${{ inputs.threshold }}" \
+          --output html \
+          > pixellint-report.html
+
+    - name: Upload Report Artifact
+      if: inputs.upload-report == 'true' && always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: pixellint-report
+        path: |
+          pixellint-results.json
+          pixellint-report.html
+
+    - name: Comment PR Results
+      if: github.event_name == 'pull_request' && inputs.comment-pr == 'true' && always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const results = JSON.parse(fs.readFileSync('pixellint-results.json', 'utf8'));
+          const score = results.summary?.averageScore || 0;
+          const grade = '${{ steps.analyze.outputs.grade }}';
+          const status = score >= ${{ inputs.threshold }} ? '✅' : '❌';
+          
+          const comment = `## ${status} PixelLint Design Check
+          
+          **Overall Score:** ${grade} (${(score * 100).toFixed(1)}%)
+          **Threshold:** ${{ inputs.threshold }}
+          
+          | Metric | Value |
+          |--------|-------|
+          | Files Analyzed | ${{ steps.analyze.outputs.total-files }} |
+          | Files Passed | ${{ steps.analyze.outputs.passed-files }} |
+          | Files Failed | ${{ steps.analyze.outputs.failed-files }} |
+          
+          <details>
+          <summary>📊 Detailed Metrics</summary>
+          
+          | Metric | Score |
+          |--------|-------|
+          | Grid Alignment | ${(results.summary?.metrics?.alignment || 0).toFixed(2)} |
+          | Spacing Consistency | ${(results.summary?.metrics?.spacing || 0).toFixed(2)} |
+          | Visual Hierarchy | ${(results.summary?.metrics?.hierarchy || 0).toFixed(2)} |
+          | Color Contrast | ${(results.summary?.metrics?.contrast || 0).toFixed(2)} |
+          
+          </details>
+          
+          ${results.files?.filter(f => f.score < ${{ inputs.threshold }}).length > 0 ? `
+          <details>
+          <summary>❌ Failed Files</summary>
+          
+          | File | Score | Issues |
+          |------|-------|--------|
+          ${results.files?.filter(f => f.score < ${{ inputs.threshold }})
+            .map(f => `| ${f.path} | ${(f.score * 100).toFixed(1)}% | ${f.issues?.length || 0} |`)
+            .join('\n')}
+          
+          </details>
+          ` : ''}
+          
+          ---
+          💜 Powered by [PixelLint](https://pixellint.caboo.ai) - AI-powered design precision analysis
+          `;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+    - name: Fail if Below Threshold
+      if: inputs.fail-on-issues == 'true'
+      shell: bash
+      run: |
+        SCORE="${{ steps.analyze.outputs.score }}"
+        THRESHOLD="${{ inputs.threshold }}"
+        
+        if (( $(echo "$SCORE < $THRESHOLD" | bc -l) )); then
+          echo "❌ Design precision check failed. Score ($SCORE) is below threshold ($THRESHOLD)"
+          exit 1
+        else
+          echo "✅ Design precision check passed!"
+        fi

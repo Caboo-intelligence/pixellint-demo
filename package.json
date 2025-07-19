@@ -1,0 +1,27 @@
+{
+  "name": "pixellint-demo",
+  "version": "1.0.0",
+  "description": "Demo repository for PixelLint - pixel-perfect design linting",
+  "scripts": {
+    "lint:design": "pixellint analyze 'screenshots/**/*.png'",
+    "lint:design:strict": "pixellint analyze 'screenshots/**/*.png' --threshold 0.9",
+    "report": "pixellint analyze 'screenshots/**/*.png' --report html && open report.html"
+  },
+  "devDependencies": {
+    "pixellint": "file:../packages/pixellint/cli"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/caboo/pixellint-demo.git"
+  },
+  "keywords": [
+    "pixellint",
+    "design-system",
+    "linting",
+    "ui",
+    "screenshots",
+    "ci"
+  ],
+  "author": "Caboo AI",
+  "license": "MIT"
+}

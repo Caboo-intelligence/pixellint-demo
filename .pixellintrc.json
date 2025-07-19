@@ -1,0 +1,15 @@
+{
+  "analyzer": {
+    "grid_size": 8,
+    "alignment_threshold": 2.0,
+    "min_contrast_ratio": 4.5
+  },
+  "thresholds": {
+    "precision": 0.7,
+    "alignment": 0.8,
+    "spacing": 0.8,
+    "consistency": 0.8,
+    "hierarchy": 0.7,
+    "contrast": 0.9
+  }
+}

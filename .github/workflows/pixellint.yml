@@ -1,0 +1,98 @@
+name: Design Precision Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  pixellint:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install PixelLint CLI
+        run: npm install -g pixellint
+        
+      - name: Run PixelLint Analysis
+        id: pixellint
+        run: |
+          # Run analysis and capture output
+          pixellint analyze "screenshots/**/*.png" --output json > results.json
+          
+          # Extract average score
+          SCORE=$(cat results.json | jq -r '.summary.averageScore // 0')
+          echo "score=$SCORE" >> $GITHUB_OUTPUT
+          
+          # Set pass/fail status
+          if (( $(echo "$SCORE >= 0.7" | bc -l) )); then
+            echo "status=pass" >> $GITHUB_OUTPUT
+            echo "✅ Design precision check passed with score: $SCORE"
+          else
+            echo "status=fail" >> $GITHUB_OUTPUT
+            echo "❌ Design precision check failed with score: $SCORE"
+            exit 1
+          fi
+          
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: pixellint-results
+          path: results.json
+          
+      - name: Comment PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('results.json', 'utf8'));
+            const score = results.summary?.averageScore || 0;
+            const status = score >= 0.7 ? '✅' : '❌';
+            const grade = score >= 0.97 ? 'A+' : score >= 0.90 ? 'A' : score >= 0.80 ? 'B' : score >= 0.70 ? 'C' : 'F';
+            
+            const comment = `## ${status} PixelLint Design Check
+            
+            **Overall Score:** ${grade} (${(score * 100).toFixed(1)}%)
+            
+            | Metric | Score |
+            |--------|-------|
+            | Alignment | ${(results.summary?.metrics?.alignment || 0).toFixed(2)} |
+            | Spacing | ${(results.summary?.metrics?.spacing || 0).toFixed(2)} |
+            | Consistency | ${(results.summary?.metrics?.consistency || 0).toFixed(2)} |
+            | Visual Hierarchy | ${(results.summary?.metrics?.hierarchy || 0).toFixed(2)} |
+            | Contrast | ${(results.summary?.metrics?.contrast || 0).toFixed(2)} |
+            
+            View full report: [pixellint-results.json](${context.payload.pull_request.html_url}/files)
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+            
+  # Alternative: Use the PixelLint GitHub Action (when published)
+  pixellint-action:
+    runs-on: ubuntu-latest
+    if: false # Enable when action is published
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run PixelLint
+        uses: caboo/pixellint-action@v1
+        with:
+          pattern: 'screenshots/**/*.png'
+          threshold: 0.7
+          fail-on-issues: true
